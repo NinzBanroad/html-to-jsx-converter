@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HTML &rarr; JSX Converter</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c2330;
+    --border: #2d3645;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --accent-2: #3fb950;
+    --danger: #f85149;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header h1 span { color: var(--accent); }
+  .opts { display: flex; gap: 16px; align-items: center; margin-left: auto; flex-wrap: wrap; }
+  .opt { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; user-select: none; }
+  .opt input { accent-color: var(--accent); cursor: pointer; }
+  .opt input[type=text] {
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 3px 8px; font-size: 13px; width: 130px;
+  }
+  .tgl {
+    background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 12px; font-size: 13px; cursor: pointer; transition: .15s;
+    display: inline-flex; align-items: center; gap: 7px;
+  }
+  .tgl::before {
+    content: ""; width: 9px; height: 9px; border-radius: 50%;
+    background: var(--border); transition: .15s;
+  }
+  .tgl:hover { border-color: var(--accent); color: var(--text); }
+  .tgl[aria-pressed="true"] {
+    background: var(--accent); color: #0d1117; border-color: var(--accent); font-weight: 600;
+  }
+  .tgl[aria-pressed="true"]::before { background: #0d1117; }
+
+  main { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); overflow: hidden; min-height: 0; }
+  .pane { background: var(--panel); display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .pane-head {
+    padding: 8px 14px; font-size: 12px; text-transform: uppercase; letter-spacing: .5px;
+    color: var(--muted); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px;
+  }
+  .pane-head .actions { margin-left: auto; display: flex; gap: 8px; }
+  .sel {
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 2px 6px; font-size: 12px; max-width: 220px;
+  }
+  textarea, pre {
+    flex: 1; margin: 0; padding: 14px; border: 0; resize: none; outline: none;
+    background: transparent; color: var(--text); font-family: var(--mono);
+    font-size: 13px; line-height: 1.5; overflow: auto; white-space: pre; tab-size: 2;
+    min-height: 0; /* allow flex child to shrink so it scrolls instead of growing */
+  }
+  textarea { width: 100%; }
+  pre { white-space: pre-wrap; word-break: break-word; }
+
+  /* split-into-sections card list */
+  .section-list { flex: 1; overflow: auto; padding: 10px; display: none; flex-direction: column; gap: 10px; min-height: 0; }
+  .pane.show-list pre#output { display: none; }
+  .pane.show-list .section-list { display: flex; }
+  /* flex-shrink:0 is critical — without it the many cards crush each other to
+     0 height in the flex column and overflow:hidden clips their content. */
+  .card { flex: 0 0 auto; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); overflow: hidden; }
+  .card-head {
+    display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+    border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 12px;
+  }
+  .card-head .nm { color: var(--accent); font-weight: 600; }
+  .card-head .meta { color: var(--muted); font-size: 11px; }
+  .card-head button { margin-left: auto; padding: 2px 10px; }
+  .card-head button.ok { background: var(--accent-2); color: #0d1117; border-color: var(--accent-2); }
+  .card pre {
+    flex: 0 0 auto; margin: 0; padding: 10px 12px; max-height: 300px; overflow: auto;
+    white-space: pre; font-size: 12.5px;
+  }
+  .card.parent { border-color: var(--accent); }
+  /* visible scrollbars */
+  textarea::-webkit-scrollbar, pre::-webkit-scrollbar { width: 12px; height: 12px; }
+  textarea::-webkit-scrollbar-thumb, pre::-webkit-scrollbar-thumb {
+    background: var(--border); border-radius: 6px; border: 3px solid var(--panel);
+  }
+  textarea::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover { background: #3d4a5c; }
+  textarea, pre { scrollbar-width: thin; scrollbar-color: var(--border) var(--panel); }
+
+  .drop {
+    position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(13,17,23,.92); border: 2px dashed var(--accent); border-radius: 8px;
+    margin: 8px; font-size: 18px; color: var(--accent); z-index: 10; text-align: center; padding: 20px;
+  }
+  body.dragging .drop { display: flex; }
+
+  button {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; transition: .15s;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.primary { background: var(--accent); color: #0d1117; border-color: var(--accent); font-weight: 600; }
+  button.primary:hover { opacity: .9; color: #0d1117; }
+  .file-btn { position: relative; overflow: hidden; }
+  .file-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; font-size: 0; }
+
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--accent-2); color: #0d1117; padding: 8px 18px; border-radius: 6px;
+    font-size: 13px; font-weight: 600; opacity: 0; pointer-events: none; transition: .25s;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .status { font-size: 12px; color: var(--muted); }
+  .status.err { color: var(--danger); }
+
+  /* loading overlay */
+  .loader {
+    position: absolute; inset: 0; display: none; flex-direction: column; gap: 14px;
+    align-items: center; justify-content: center; background: rgba(22,27,34,.85);
+    z-index: 9; backdrop-filter: blur(2px); font-size: 14px; color: var(--accent);
+  }
+  .loader.show { display: flex; }
+  .spinner {
+    width: 38px; height: 38px; border: 4px solid var(--border);
+    border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; } }
+</style>
+</head>
+<body>
+  <header>
+    <h1>HTML <span>&rarr;</span> JSX</h1>
+    <div class="opts">
+      <label class="opt"><input type="checkbox" id="optComponent" checked /> Wrap as component</label>
+      <label class="opt">Name: <input type="text" id="optName" value="Component" /></label>
+      <label class="opt"><input type="checkbox" id="optBodyOnly" checked /> Body only</label>
+      <button class="tgl" id="optSplit" aria-pressed="false">Split into sections</button>
+      <label class="opt"><input type="checkbox" id="optLive" checked /> Live</label>
+    </div>
+  </header>
+
+  <main>
+    <section class="pane">
+      <div class="pane-head">
+        HTML input
+        <div class="actions">
+          <button class="file-btn">Choose file<input type="file" id="fileInput" accept=".html,.htm,text/html" /></button>
+          <button id="clearBtn">Clear</button>
+          <button class="primary" id="convertBtn">Convert &rarr;</button>
+        </div>
+      </div>
+      <textarea id="input" placeholder="Paste HTML here, or drop / choose an .html file..." spellcheck="false"></textarea>
+    </section>
+
+    <section class="pane" style="position:relative;">
+      <div class="pane-head">
+        JSX output
+        <span class="status" id="status"></span>
+        <div class="actions">
+          <button id="copyBtn">Copy all</button>
+          <button id="downloadBtn">Download .jsx</button>
+          <button id="zipBtn" style="display:none">Download .zip</button>
+        </div>
+      </div>
+      <pre id="output"></pre>
+      <div id="sectionList" class="section-list"></div>
+      <div class="loader" id="loader"><div class="spinner"></div><span id="loaderText">Converting&hellip;</span></div>
+      <div class="drop">Drop your .html file to convert</div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+/* ---------- HTML -> JSX conversion (uses native DOMParser) ---------- */
+
+// HTML attribute name -> JSX prop name (the irregular ones).
+const ATTR_MAP = {
+  "class": "className", "for": "htmlFor",
+  "accept-charset": "acceptCharset", "accesskey": "accessKey", "allowfullscreen": "allowFullScreen",
+  "autocomplete": "autoComplete", "autofocus": "autoFocus", "autoplay": "autoPlay",
+  "cellpadding": "cellPadding", "cellspacing": "cellSpacing", "charset": "charSet",
+  "class": "className", "classid": "classID", "colspan": "colSpan", "contenteditable": "contentEditable",
+  "contextmenu": "contextMenu", "controlslist": "controlsList", "crossorigin": "crossOrigin",
+  "datetime": "dateTime", "enctype": "encType", "formaction": "formAction", "formenctype": "formEncType",
+  "formmethod": "formMethod", "formnovalidate": "formNoValidate", "formtarget": "formTarget",
+  "frameborder": "frameBorder", "hreflang": "hrefLang", "http-equiv": "httpEquiv",
+  "inputmode": "inputMode", "keyparams": "keyParams", "keytype": "keyType", "marginheight": "marginHeight",
+  "marginwidth": "marginWidth", "maxlength": "maxLength", "mediagroup": "mediaGroup",
+  "minlength": "minLength", "novalidate": "noValidate", "radiogroup": "radioGroup",
+  "readonly": "readOnly", "rowspan": "rowSpan", "spellcheck": "spellCheck", "srcdoc": "srcDoc",
+  "srclang": "srcLang", "srcset": "srcSet", "tabindex": "tabIndex", "usemap": "useMap",
+  "autocapitalize": "autoCapitalize", "itemprop": "itemProp", "itemscope": "itemScope",
+  "itemtype": "itemType", "itemid": "itemID", "itemref": "itemRef",
+  // SVG common
+  "stroke-width": "strokeWidth", "stroke-linecap": "strokeLinecap", "stroke-linejoin": "strokeLinejoin",
+  "stroke-dasharray": "strokeDasharray", "stroke-dashoffset": "strokeDashoffset",
+  "stroke-miterlimit": "strokeMiterlimit", "stroke-opacity": "strokeOpacity", "fill-opacity": "fillOpacity",
+  "fill-rule": "fillRule", "clip-path": "clipPath", "clip-rule": "clipRule", "stop-color": "stopColor",
+  "stop-opacity": "stopOpacity", "text-anchor": "textAnchor", "font-family": "fontFamily",
+  "font-size": "fontSize", "font-weight": "fontWeight", "letter-spacing": "letterSpacing",
+  "baseline-shift": "baselineShift", "color-interpolation": "colorInterpolation",
+  "dominant-baseline": "dominantBaseline", "enable-background": "enableBackground",
+  "flood-color": "floodColor", "flood-opacity": "floodOpacity", "marker-end": "markerEnd",
+  "marker-mid": "markerMid", "marker-start": "markerStart", "shape-rendering": "shapeRendering",
+  "vector-effect": "vectorEffect", "xlink:href": "xlinkHref",
+};
+
+const VOID = new Set(["area","base","br","col","embed","hr","img","input","keygen","link","meta","param","source","track","wbr"]);
+
+function camelCase(s) {
+  return s.replace(/[-:]([a-z])/g, (_, c) => c.toUpperCase());
+}
+
+// "color:red; font-size:12px" -> { color: 'red', fontSize: '12px' }
+function styleToObject(style) {
+  const out = [];
+  style.split(";").forEach(decl => {
+    const i = decl.indexOf(":");
+    if (i < 0) return;
+    let prop = decl.slice(0, i).trim();
+    const val = decl.slice(i + 1).trim();
+    if (!prop || !val) return;
+    // custom property --foo stays as-is and is quoted
+    const key = prop.startsWith("--") ? `'${prop}'` : camelCase(prop);
+    out.push(`${key}: '${val.replace(/'/g, "\\'")}'`);
+  });
+  return out.length ? `{{ ${out.join(", ")} }}` : null;
+}
+
+function mapAttrName(name) {
+  const lower = name.toLowerCase();
+  if (ATTR_MAP[lower]) return ATTR_MAP[lower];
+  if (lower.startsWith("data-") || lower.startsWith("aria-")) return lower; // keep as-is
+  if (lower.startsWith("on") && lower.length > 2) {                          // events: onclick -> onClick
+    return "on" + lower.charAt(2).toUpperCase() + lower.slice(3);
+  }
+  if (/[-:]/.test(lower)) return camelCase(lower);                           // hyphen/colon -> camel
+  return name; // preserve original casing for the rest (e.g. SVG viewBox already camel)
+}
+
+function escapeText(t) {
+  // In JSX text, &, <, >, { and } are special. Emit HTML entities (JSX text
+  // decodes them) so any stray markup characters can't break the parse.
+  return t
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\{/g, "&#123;")
+    .replace(/\}/g, "&#125;");
+}
+
+function serializeAttrs(el) {
+  const parts = [];
+  for (const attr of Array.from(el.attributes)) {
+    const rawName = attr.name;
+    const value = attr.value;
+    if (rawName.toLowerCase() === "style") {
+      const obj = styleToObject(value);
+      if (obj) parts.push(`style=${obj}`);
+      continue;
+    }
+    const name = mapAttrName(rawName);
+    if (value === "") {
+      parts.push(name); // bare attribute (boolean) -> JSX treats as true
+    } else if (value.includes('"')) {
+      parts.push(`${name}={${JSON.stringify(value)}}`); // avoid breaking on quotes
+    } else {
+      parts.push(`${name}="${value}"`);
+    }
+  }
+  return parts;
+}
+
+function indent(n) { return "  ".repeat(n); }
+
+function serializeNode(node, depth, lines) {
+  // Element
+  if (node.nodeType === 1) {
+    const tag = node.tagName.toLowerCase();
+    if (tag === "script" || tag === "style") {
+      // keep raw content inside a JS template literal so braces/CSS don't break JSX.
+      // Escape chars that would terminate the template literal early: backslash,
+      // backtick, and ${ interpolation (common in real inline scripts/styles).
+      const attrs = serializeAttrs(node);
+      const open = `<${tag}${attrs.length ? " " + attrs.join(" ") : ""}>`;
+      const raw = node.textContent;
+      if (!raw.trim()) { lines.push(indent(depth) + open.replace(/>$/, " />")); return; }
+      const safe = raw.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
+      lines.push(indent(depth) + open + "{`");
+      safe.split("\n").forEach(l => lines.push(l));
+      lines.push("`}" + `</${tag}>`);
+      return;
+    }
+
+    const attrs = serializeAttrs(node);
+    const attrStr = attrs.length ? " " + attrs.join(" ") : "";
+    const children = Array.from(node.childNodes).filter(keepNode);
+
+    if (children.length === 0) {
+      if (VOID.has(tag)) lines.push(indent(depth) + `<${tag}${attrStr} />`);
+      else lines.push(indent(depth) + `<${tag}${attrStr} />`);
+      return;
+    }
+
+    // single short text child -> inline
+    if (children.length === 1 && children[0].nodeType === 3) {
+      const txt = escapeText(children[0].textContent.trim());
+      lines.push(indent(depth) + `<${tag}${attrStr}>${txt}</${tag}>`);
+      return;
+    }
+
+    lines.push(indent(depth) + `<${tag}${attrStr}>`);
+    children.forEach(c => serializeNode(c, depth + 1, lines));
+    lines.push(indent(depth) + `</${tag}>`);
+    return;
+  }
+
+  // Text
+  if (node.nodeType === 3) {
+    const txt = node.textContent.trim();
+    if (txt) lines.push(indent(depth) + escapeText(txt));
+    return;
+  }
+
+  // Comment -> {/* ... */}
+  if (node.nodeType === 8) {
+    const c = node.textContent.replace(/\*\//g, "* /").trim();
+    lines.push(indent(depth) + `{/* ${c} */}`);
+    return;
+  }
+}
+
+function keepNode(node) {
+  if (node.nodeType === 3) return node.textContent.trim().length > 0; // drop whitespace-only text
+  return node.nodeType === 1 || node.nodeType === 8; // elements & comments
+}
+
+// Build the JSX body (inside `return (...)`) for a set of root nodes.
+function rootsToJsx(roots, depth) {
+  const lines = [];
+  const multi = roots.length !== 1;
+  if (multi) lines.push(indent(depth) + "<>");
+  roots.forEach(r => serializeNode(r, depth + (multi ? 1 : 0), lines));
+  if (multi) lines.push(indent(depth) + "</>");
+  return lines.join("\n");
+}
+
+function sanitizeName(s) {
+  let n = (s || "").replace(/[^A-Za-z0-9_$]/g, "");
+  if (!n) return "";
+  if (/^[0-9]/.test(n)) n = "S" + n;
+  return n.charAt(0).toUpperCase() + n.slice(1);
+}
+
+// "about-us" / "01 Cover" / "section-head" -> PascalCase identifier
+function pascal(s) {
+  const parts = (s || "").replace(/^[0-9]+[a-z]?\s+/i, "").replace(/[^A-Za-z0-9]+/g, " ").trim().split(/\s+/);
+  const name = parts.filter(Boolean).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join("");
+  return /^[0-9]/.test(name) ? "S" + name : name;
+}
+
+// Pick a component name for a top-level section element.
+function sectionName(el, i, used) {
+  let base = "";
+  if (el.id) base = pascal(el.id);
+  else if (el.getAttribute && el.getAttribute("data-screen-label")) base = pascal(el.getAttribute("data-screen-label"));
+  else if (typeof el.className === "string" && el.className.trim()) base = pascal(el.className.trim().split(/\s+/)[0]);
+  if (!base) base = pascal(el.tagName) + "Section";
+  if (!base) base = "Section" + (i + 1);
+  let name = base, k = 2;
+  while (used.has(name)) name = base + (k++);
+  used.add(name);
+  return name;
+}
+
+// Standard arrow-function component. `export default Name;` is appended on a
+// separate line when exported (you can't `export default const`).
+function fnCode(name, inner, exported) {
+  const def = `const ${name} = () => {\n  return (\n${inner}\n  );\n};`;
+  return exported ? def + `\n\nexport default ${name};` : def;
+}
+
+// Returns { combined, sections, parent } — sections/parent are null when not splitting.
+function generate(html, opts) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+
+  if (opts.split) {
+    const els = Array.from(doc.body.childNodes).filter(n => n.nodeType === 1); // top-level elements
+    const used = new Set();
+    const parentName = sanitizeName(opts.name || doc.title || "Page") || "Page";
+    used.add(parentName);
+    const sections = els.map((el, i) => {
+      const name = sectionName(el, i, used);
+      const inner = rootsToJsx([el], 2);
+      return { name, inner };
+    });
+
+    // Combined: all section fns (not exported) + an exported parent that composes them.
+    const parentInner = "    <>\n" + sections.map(s => `      <${s.name} />`).join("\n") + "\n    </>";
+    const parentCombined = fnCode(parentName, parentInner, true);
+    const combined = sections.map(s => fnCode(s.name, s.inner, false)).join("\n\n") +
+      "\n\n" + parentCombined + "\n";
+
+    // Parent file for the zip: imports each section from its own file.
+    const imports = sections.map(s => `import ${s.name} from './${s.name}';`).join("\n");
+    const parentFile = imports + "\n\n" + parentCombined + "\n";
+
+    return { combined, sections, parent: { name: parentName, file: parentFile } };
+  }
+
+  // Single-component (or raw) output — original behaviour.
+  let roots;
+  if (opts.bodyOnly) {
+    roots = Array.from(doc.body.childNodes).filter(keepNode);
+    if (roots.length === 0 && doc.head) roots = Array.from(doc.head.childNodes).filter(keepNode);
+  } else {
+    roots = Array.from(doc.documentElement.childNodes).filter(keepNode);
+  }
+  const depth = opts.component ? 2 : 0;
+  const jsx = rootsToJsx(roots, depth);
+  if (opts.component) {
+    const name = sanitizeName(opts.name) || "Component";
+    return { combined: fnCode(name, jsx, true) + "\n", sections: null, parent: null };
+  }
+  return { combined: jsx + "\n", sections: null, parent: null };
+}
+
+/* ---------- UI wiring ---------- */
+const $ = id => document.getElementById(id);
+const input = $("input"), output = $("output"), statusEl = $("status");
+let lastName = "Component";
+
+let splitOn = false; // toggled by the "Split into sections" button
+
+function getOpts() {
+  return {
+    component: $("optComponent").checked,
+    name: $("optName").value.trim(),
+    bodyOnly: $("optBodyOnly").checked,
+    split: splitOn,
+    live: $("optLive").checked,
+  };
+}
+
+const loaderEl = $("loader"), loaderText = $("loaderText");
+function showLoader(msg) { loaderText.textContent = msg || "Converting…"; loaderEl.classList.add("show"); }
+function hideLoader() { loaderEl.classList.remove("show"); }
+
+// Robust clipboard copy. The async Clipboard API is blocked/unreliable on
+// file:// origins, so on file:// we use the synchronous execCommand fallback
+// (runs inside the click gesture, no await), and the modern API elsewhere.
+function copyText(text) {
+  if (navigator.clipboard && location.protocol !== "file:") {
+    return navigator.clipboard.writeText(text).then(() => true).catch(() => fallbackCopy(text));
+  }
+  return Promise.resolve(fallbackCopy(text));
+}
+function fallbackCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed"; ta.style.top = "-1000px"; ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  document.body.removeChild(ta);
+  return ok;
+}
+
+let lastResult = null; // { combined, sections, parent }
+const zipBtn = $("zipBtn"), outPane = output.closest(".pane"), sectionList = $("sectionList");
+
+// One copyable card: name + meta + per-card Copy button + code block.
+function makeCard(name, meta, code, isParent) {
+  const wrap = document.createElement("div");
+  wrap.className = "card" + (isParent ? " parent" : "");
+  const head = document.createElement("div"); head.className = "card-head";
+  const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = name;
+  const mt = document.createElement("span"); mt.className = "meta"; mt.textContent = meta;
+  const btn = document.createElement("button"); btn.textContent = "Copy";
+  btn.addEventListener("click", async () => {
+    const ok = await copyText(code);
+    btn.textContent = ok ? "Copied!" : "Press Ctrl+C";
+    btn.classList.toggle("ok", ok);
+    setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("ok"); }, 1400);
+  });
+  head.append(nm, mt, btn);
+  const pre = document.createElement("pre"); pre.textContent = code;
+  wrap.append(head, pre);
+  return wrap;
+}
+
+function renderOutput() {
+  const r = lastResult;
+  if (r && r.sections) {
+    // Split mode: a stacked list of section cards, each individually copyable.
+    outPane.classList.add("show-list");
+    zipBtn.style.display = "";
+    sectionList.innerHTML = "";
+    sectionList.appendChild(makeCard(r.parent.name, "parent · imports + composition", r.parent.file, true));
+    r.sections.forEach(s => sectionList.appendChild(makeCard(s.name, "section", fnCode(s.name, s.inner, true) + "\n")));
+    statusEl.textContent = `${r.sections.length} sections`;
+  } else {
+    // Single-file mode.
+    outPane.classList.remove("show-list");
+    zipBtn.style.display = "none";
+    output.textContent = r ? r.combined : "";
+    const lc = output.textContent ? output.textContent.split("\n").length : 0;
+    statusEl.textContent = output.textContent ? `${lc} lines` : "";
+  }
+  statusEl.className = "status";
+}
+
+function doConvert() {
+  const html = input.value;
+  if (!html.trim()) {
+    lastResult = null; renderOutput(); return;
+  }
+  try {
+    lastResult = generate(html, getOpts());
+    renderOutput();
+  } catch (e) {
+    statusEl.textContent = "Error: " + e.message;
+    statusEl.className = "status err";
+  }
+}
+
+// run() = silent (used by live typing). runWithLoader() shows the spinner for
+// explicit conversions (file upload / Convert button), deferring the work one
+// frame so the spinner actually paints before the (possibly heavy) parse.
+function run() { doConvert(); }
+
+function runWithLoader(msg) {
+  showLoader(msg);
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    doConvert();
+    hideLoader();
+  }));
+}
+
+function debounce(fn, ms) { let t; return () => { clearTimeout(t); t = setTimeout(fn, ms); }; }
+const liveRun = debounce(run, 200);
+
+input.addEventListener("input", () => { if (getOpts().live) liveRun(); });
+["optComponent","optName","optBodyOnly"].forEach(id => $(id).addEventListener("input", () => { if (getOpts().live) run(); }));
+
+// Split toggle: flip state, reflect it on the button, and reconvert with a loader.
+$("optSplit").addEventListener("click", () => {
+  splitOn = !splitOn;
+  $("optSplit").setAttribute("aria-pressed", splitOn ? "true" : "false");
+  if (input.value.trim()) runWithLoader(splitOn ? "Splitting into sections…" : "Converting…");
+});
+
+$("convertBtn").addEventListener("click", () => runWithLoader(splitOn ? "Splitting into sections…" : "Converting…"));
+$("clearBtn").addEventListener("click", () => {
+  input.value = ""; lastResult = null; renderOutput(); input.focus();
+});
+
+function downloadBlob(blob, filename) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// "Copy all" / "Download .jsx" act on the combined single-file output.
+$("copyBtn").addEventListener("click", async () => {
+  if (!lastResult) return;
+  const ok = await copyText(lastResult.combined);
+  toast(ok ? (lastResult.sections ? "Copied all sections (one file)" : "Copied to clipboard") : "Copy failed — select & Ctrl+C");
+});
+
+function outFilename() {
+  if (lastResult && lastResult.sections) return lastResult.parent.name + ".jsx";
+  return ((getOpts().name || lastName || "Component").replace(/[^A-Za-z0-9_$]/g, "") || "Component") + ".jsx";
+}
+
+$("downloadBtn").addEventListener("click", () => {
+  if (!lastResult) return;
+  const name = outFilename();
+  downloadBlob(new Blob([lastResult.combined], { type: "text/plain" }), name);
+  toast("Downloaded " + name);
+});
+
+// Download every section + the parent as separate .jsx files in one .zip.
+zipBtn.addEventListener("click", () => {
+  if (!lastResult || !lastResult.sections) return;
+  const r = lastResult;
+  const files = r.sections.map(s => ({ name: s.name + ".jsx", data: strBytes(fnCode(s.name, s.inner, true) + "\n") }));
+  files.push({ name: r.parent.name + ".jsx", data: strBytes(r.parent.file) });
+  downloadBlob(makeZip(files), r.parent.name + "-sections.zip");
+  toast("Downloaded " + (files.length) + " files (.zip)");
+});
+
+function loadFile(file) {
+  if (!file) return;
+  const base = file.name.replace(/\.(html?|xhtml)$/i, "");
+  if (base) { $("optName").value = base.replace(/[^A-Za-z0-9_$]/g, "") || "Component"; lastName = $("optName").value; }
+  showLoader("Reading " + file.name + "…");
+  const reader = new FileReader();
+  reader.onload = e => {
+    input.value = e.target.result;
+    loaderText.textContent = "Converting…";
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      doConvert();
+      hideLoader();
+      toast("Loaded " + file.name);
+    }));
+  };
+  reader.onerror = () => { hideLoader(); statusEl.textContent = "Error reading file"; statusEl.className = "status err"; };
+  reader.readAsText(file);
+}
+
+$("fileInput").addEventListener("change", e => loadFile(e.target.files[0]));
+
+// Drag & drop anywhere on the page
+let dragDepth = 0;
+window.addEventListener("dragenter", e => { e.preventDefault(); dragDepth++; document.body.classList.add("dragging"); });
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("dragleave", e => { e.preventDefault(); if (--dragDepth <= 0) document.body.classList.remove("dragging"); });
+window.addEventListener("drop", e => {
+  e.preventDefault(); dragDepth = 0; document.body.classList.remove("dragging");
+  const file = e.dataTransfer.files[0];
+  if (file) loadFile(file);
+});
+
+let toastT;
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastT);
+  toastT = setTimeout(() => t.classList.remove("show"), 1800);
+}
+
+/* ---------- Minimal ZIP writer (store / no compression, no deps) ---------- */
+function strBytes(s) { return new TextEncoder().encode(s); }
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) crc = CRC_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+// files: [{ name: string, data: Uint8Array }] -> Blob (application/zip)
+function makeZip(files) {
+  const local = [], central = [];
+  let offset = 0;
+  for (const f of files) {
+    const nameB = strBytes(f.name);
+    const data = f.data;
+    const crc = crc32(data);
+
+    const lh = new Uint8Array(30 + nameB.length);
+    const dv = new DataView(lh.buffer);
+    dv.setUint32(0, 0x04034b50, true);   // local file header sig
+    dv.setUint16(4, 20, true);           // version needed
+    dv.setUint16(8, 0, true);            // method 0 = store
+    dv.setUint32(14, crc, true);
+    dv.setUint32(18, data.length, true); // compressed size
+    dv.setUint32(22, data.length, true); // uncompressed size
+    dv.setUint16(26, nameB.length, true);
+    lh.set(nameB, 30);
+    local.push(lh, data);
+
+    const cd = new Uint8Array(46 + nameB.length);
+    const cv = new DataView(cd.buffer);
+    cv.setUint32(0, 0x02014b50, true);   // central dir header sig
+    cv.setUint16(4, 20, true);           // version made by
+    cv.setUint16(6, 20, true);           // version needed
+    cv.setUint16(10, 0, true);           // method store
+    cv.setUint32(16, crc, true);
+    cv.setUint32(20, data.length, true);
+    cv.setUint32(24, data.length, true);
+    cv.setUint16(28, nameB.length, true);
+    cv.setUint32(42, offset, true);      // local header offset
+    cd.set(nameB, 46);
+    central.push(cd);
+
+    offset += lh.length + data.length;
+  }
+  const centralSize = central.reduce((a, c) => a + c.length, 0);
+  const end = new Uint8Array(22);
+  const ev = new DataView(end.buffer);
+  ev.setUint32(0, 0x06054b50, true);     // end of central dir sig
+  ev.setUint16(8, files.length, true);
+  ev.setUint16(10, files.length, true);
+  ev.setUint32(12, centralSize, true);
+  ev.setUint32(16, offset, true);        // central dir offset
+  return new Blob([...local, ...central, end], { type: "application/zip" });
+}
+</script>
+</body>
+</html>
