@@ -12,6 +12,7 @@ export default function Converter() {
   const [bodyOnly, setBodyOnly] = useState(true);
   const [live, setLive] = useState(true);
   const [splitOn, setSplitOn] = useState(false);
+  const [theme, setTheme] = useState("dark");
 
   const [result, setResult] = useState(null); // { combined, sections, parent }
   const [status, setStatus] = useState("");
@@ -19,7 +20,10 @@ export default function Converter() {
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState("Converting…");
   const [dragging, setDragging] = useState(false);
+  const [dragHover, setDragHover] = useState(false);
   const [toast, setToast] = useState("");
+  const [converting, setConverting] = useState(false);
+  const conversionTimeoutRef = useRef(null);
 
   const lastName = useRef("Component");
   const toastTimer = useRef(null);
@@ -35,18 +39,55 @@ export default function Converter() {
     toastTimer.current = setTimeout(() => setToast(""), 1800);
   }, []);
 
+  // Theme management
+  useEffect(() => {
+    const savedTheme = localStorage.getItem("htmlToJsxTheme") || "dark";
+    setTheme(savedTheme);
+    document.documentElement.setAttribute("data-theme", savedTheme);
+  }, []);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => {
+      const newTheme = prev === "dark" ? "light" : "dark";
+      localStorage.setItem("htmlToJsxTheme", newTheme);
+      document.documentElement.setAttribute("data-theme", newTheme);
+      return newTheme;
+    });
+  }, []);
+
   const convertNow = useCallback((overrideSplit) => {
     const s = stateRef.current;
     const sp = overrideSplit !== undefined ? overrideSplit : s.splitOn;
     if (!s.html.trim()) { setResult(null); setStatus(""); setStatusErr(false); return; }
+
+    // Clear any previous timeout
+    if (conversionTimeoutRef.current) clearTimeout(conversionTimeoutRef.current);
+
+    setConverting(true);
+    const timeoutId = setTimeout(() => {
+      setConverting(false);
+      setStatusErr(true);
+      setStatus("Error: Conversion timed out (>30s). Try simpler HTML.");
+      setResult(null);
+    }, 30000); // 30 second timeout
+
     try {
       const r = generate(s.html, { component: s.component, name: s.name, bodyOnly: s.bodyOnly, split: sp });
+      clearTimeout(timeoutId);
+
+      if (!r || !r.combined) {
+        throw new Error("Conversion produced no output");
+      }
       setResult(r);
       setStatusErr(false);
       setStatus(r.sections ? `${r.sections.length} sections` : `${r.combined.split("\n").length} lines`);
     } catch (e) {
+      clearTimeout(timeoutId);
       setStatusErr(true);
-      setStatus("Error: " + e.message);
+      setStatus("Error: " + (e.message || "Conversion failed"));
+      setResult(null);
+    } finally {
+      setConverting(false);
     }
   }, []);
 
@@ -59,11 +100,27 @@ export default function Converter() {
     }));
   }, [convertNow]);
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        runWithLoader(splitOn ? "Splitting into sections…" : "Converting…");
+      } else if ((e.ctrlKey || e.metaKey) && e.key === "l") {
+        e.preventDefault();
+        clearAll();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [splitOn, runWithLoader]);
+
   // Live conversion (debounced) for typing + option changes. Split toggle is
   // handled separately so it can show the loader.
+  // Disable live conversion for large HTML (>50KB) to prevent freezing
   useEffect(() => {
-    if (!live) return;
-    const t = setTimeout(() => convertNow(), 200);
+    if (!live || html.length > 50000) return;
+    const t = setTimeout(() => convertNow(), 500);
     return () => clearTimeout(t);
   }, [html, component, name, bodyOnly, live, convertNow]);
 
@@ -93,15 +150,41 @@ export default function Converter() {
     reader.readAsText(file);
   }, [convertNow, showToast]);
 
-  // Drag & drop anywhere on the window.
+  // Drag & drop anywhere on the window with enhanced feedback.
   useEffect(() => {
-    const onEnter = (e) => { e.preventDefault(); dragDepth.current++; setDragging(true); };
-    const onOver = (e) => e.preventDefault();
-    const onLeave = (e) => { e.preventDefault(); if (--dragDepth.current <= 0) setDragging(false); };
+    const onEnter = (e) => {
+      e.preventDefault();
+      if (e.dataTransfer.types.includes("Files")) {
+        dragDepth.current++;
+        setDragging(true);
+        setDragHover(true);
+      }
+    };
+    const onOver = (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      setDragHover(true);
+    };
+    const onLeave = (e) => {
+      e.preventDefault();
+      if (--dragDepth.current <= 0) {
+        setDragging(false);
+        setDragHover(false);
+      }
+    };
     const onDrop = (e) => {
-      e.preventDefault(); dragDepth.current = 0; setDragging(false);
-      const file = e.dataTransfer.files[0];
-      if (file) loadFile(file);
+      e.preventDefault();
+      dragDepth.current = 0;
+      setDragging(false);
+      setDragHover(false);
+      const file = Array.from(e.dataTransfer.files).find((f) =>
+        /\.(html?|xhtml)$/i.test(f.name)
+      );
+      if (file) {
+        loadFile(file);
+      } else if (e.dataTransfer.files.length > 0) {
+        showToast("Please drop an HTML file");
+      }
     };
     window.addEventListener("dragenter", onEnter);
     window.addEventListener("dragover", onOver);
@@ -113,7 +196,7 @@ export default function Converter() {
       window.removeEventListener("dragleave", onLeave);
       window.removeEventListener("drop", onDrop);
     };
-  }, [loadFile]);
+  }, [loadFile, showToast]);
 
   const outFilename = () => {
     if (result && result.sections) return result.parent.name + ".jsx";
@@ -153,6 +236,9 @@ export default function Converter() {
           <label className="opt"><input type="checkbox" checked={bodyOnly} onChange={(e) => setBodyOnly(e.target.checked)} /> Body only</label>
           <button className="tgl" aria-pressed={splitOn} onClick={toggleSplit}>Split into sections</button>
           <label className="opt"><input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} /> Live</label>
+          <button className="theme-toggle" onClick={toggleTheme} title="Toggle dark/light mode">
+            {theme === "dark" ? "☀️" : "🌙"}
+          </button>
         </div>
       </header>
 
@@ -177,10 +263,15 @@ export default function Converter() {
         <section className="pane">
           <div className="pane-head">
             JSX output
-            <span className={"status" + (statusErr ? " err" : "")}>{status}</span>
+            {html.length > 50000 && !result && (
+              <span className="status warn">Live conversion disabled (file too large — use Convert button)</span>
+            )}
+            {html.length <= 50000 && (
+              <span className={"status" + (statusErr ? " err" : "")}>{status}</span>
+            )}
             <div className="actions">
-              <button onClick={copyAll}>{result && result.sections ? "Copy all" : "Copy"}</button>
-              <button onClick={downloadJsx}>Download .jsx</button>
+              <button onClick={copyAll} disabled={!result}>{result && result.sections ? "Copy all" : "Copy"}</button>
+              <button onClick={downloadJsx} disabled={!result}>Download .jsx</button>
               {result && result.sections && <button onClick={downloadZip}>Download .zip</button>}
             </div>
           </div>
@@ -199,7 +290,12 @@ export default function Converter() {
           {loading && (
             <div className="loader"><div className="spinner" /><span>{loadingMsg}</span></div>
           )}
-          {dragging && <div className="drop">Drop your .html file to convert</div>}
+          {dragging && (
+            <div className={"drop" + (dragHover ? " active" : "")}>
+              <div className="drop-icon">📄</div>
+              <div>Drop your HTML file here</div>
+            </div>
+          )}
         </section>
       </main>
 
